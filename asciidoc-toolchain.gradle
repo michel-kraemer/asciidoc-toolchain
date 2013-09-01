@@ -1,0 +1,482 @@
+// Copyright 2013 Michel Kraemer
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'xml-resolver:xml-resolver:1.2'
+        classpath 'net.sf.xslthl:xslthl:2.1.0'
+        classpath 'org.python:jython-standalone:2.5.3'
+        classpath 'org.apache.directory.studio:org.apache.commons.io:2.4'
+        classpath 'net.sf.saxon:Saxon-B:9.0'
+    }
+}
+
+import java.nio.file.FileSystems
+import java.nio.file.StandardWatchEventKinds
+import java.nio.file.WatchKey
+import java.util.concurrent.TimeUnit
+import javax.xml.transform.TransformerFactory
+import javax.xml.transform.sax.SAXResult
+import javax.xml.transform.stream.StreamResult
+import javax.xml.transform.stream.StreamSource
+import net.sf.saxon.FeatureKeys
+import org.apache.commons.io.FilenameUtils
+import org.apache.xml.resolver.Resolver
+import org.apache.xml.resolver.tools.CatalogResolver
+import org.apache.xml.resolver.tools.ResolvingXMLReader
+import org.python.core.PySystemState
+import org.python.core.imp
+import org.python.modules._py_compile
+
+/**
+ * Checks if Python 2.4 or higher (but not Python 3.x) is available
+ * in the system's path
+ * @return true if the correct version of Python is available, false otherwise
+ */
+def checkPython() {
+  if (!ext.properties.containsKey("pythonExists")) {
+      try {
+          //try to execute Python. Buffer its output.
+          def errout = new ByteArrayOutputStream()
+          exec {
+              commandLine 'python', '--version'
+              standardOutput = new ByteArrayOutputStream()
+              errorOutput = errout
+          }
+          
+          //check output for version number
+          def pyver = errout.toString().trim()
+          if (!pyver.startsWith('Python 2.')) {
+              logger.warn("Unexpected Python version: ${pyver}")
+              logger.warn("Please install Python 2.4 or higher (but not 3.x) to improve performance")
+              ext.pythonExists = false
+          } else {
+              ext.pythonExists = true
+          }
+      } catch (Exception e) {
+          //executable not found or some other error happened
+          ext.pythonExists = false
+      }
+  }
+  return ext.pythonExists
+}
+
+/**
+ * Downloads a file. Does not do anything if the file already exists.
+ * @param dir the destiname directory
+ * @param name the file's name
+ * @param url the URL from which the file should be retrieved
+ * @param the downloaded file
+ */
+def downloadFile(dir, name, url) {
+    def f = new File(dir, name)
+    if (!f.exists()) {
+        logger.quiet("Downloading ${name} ...")
+        def part = new File(dir, "${name}.part")
+        part.delete()
+        ant.get(
+            src: url,
+            dest: part
+        )
+        part.renameTo(f)
+    }
+    return f
+}
+
+/**
+ * Downloads and unzips a file. Does not do anything if the unzipped
+ * directory already exists.
+ * @param name the file's name
+ * @param url the URL from which the file should be retrieved
+ * @param cut true if the first directory should be cut while unzipping
+ * @return the path to the unzipped files
+ */
+def downloadAndUnzip(name, url, cut) {
+    def asciidocDir = new File(projectDir, ".asciidoc")
+    asciidocDir.mkdirs()
+    
+    def destDir = new File(asciidocDir, FilenameUtils.removeExtension(name))
+    if (!destDir.exists()) {
+        def destFile = downloadFile(asciidocDir, name, url)
+        logger.quiet("Unzipping ...")
+        if (cut) {
+            ant.unzip(src: destFile, dest: destDir) {
+                cutdirsmapper(dirs: 1)
+            }
+        } else {
+            ant.unzip(src: destFile, dest: destDir)
+        }
+    }
+    
+    return destDir
+}
+
+/**
+ * Downloads AsciiDoc and compiles it to Java bytecode
+ * @return the compiled and loaded AsciiDoc class
+ */
+def setupAsciiDoc() {
+    def url = "https://asciidoc.googlecode.com/archive/${ASCIIDOC_VERSION}.zip"
+    
+    //create directory for executable files
+    def asciidocDir = new File(projectDir, ".asciidoc")
+    asciidocDir.mkdirs()
+    
+    //check if the compiled AsciiDoc class exists
+    def asciidocExecDir = new File(asciidocDir, ASCIIDOC_VERSION)
+    def asciidocClass = new File(asciidocExecDir, 'asciidoc$py.class')
+    if (!asciidocClass.exists()) {
+        //download AsciiDoc if necessary
+        downloadAndUnzip("${ASCIIDOC_VERSION}.zip", url, true)
+        
+        //replace __file__ in AsciiDoc Python script
+        def asciidocPy = new File(asciidocExecDir, "asciidoc.py")
+        ant.replace(
+            file: asciidocPy,
+            token: '__file__',
+            value: "'" + asciidocPy.toString().replaceAll("\\\\", "/") + "'"
+        )
+        
+        //compile AsciiDoc Python script to bytecode
+        logger.quiet("Compiling ...")
+        def moduleName = _py_compile.getModuleName(asciidocPy)
+        def bytes = imp.compileSource(moduleName, asciidocPy)
+        imp.cacheCompiledSource(asciidocPy.getAbsolutePath(), asciidocClass.getAbsolutePath(), bytes)
+    }
+    
+    return asciidocClass
+}
+
+/**
+ * Download and unzip the DocBook XSL Stylesheets
+ * @return the path to the unzipped stylesheets
+ */
+def setupDocBookXSL() {
+    def baseName = 'docbook-xsl-1.78.1.zip'
+    def url = "http://downloads.sourceforge.net/project/docbook/docbook-xsl/1.78.1/${baseName}"
+    return downloadAndUnzip(baseName, url, true)
+}
+
+/**
+ * Download and unzip the DocBook DTD
+ * @return the path to the unzipped files
+ */
+def setupDocBookDTD() {
+    def baseName = 'docbook-xml-4.5.jar'
+    def url = "http://maven-us.nuxeo.org/nexus/content/repositories/public/docbook/docbook-xml/4.5/${baseName}"
+    return downloadAndUnzip(baseName, url, false)
+}
+
+/**
+ * Sets up FOP. Downloads, unzips, and compiles it.
+ * @return the directory where FOP is installed
+ */
+def setupFOP() {
+    //download FOP
+    def url = 'https://github.com/apache/fop/archive/6d721f3864e767784112ebf1ffca09107f8dc543.zip'
+    def fopDir = downloadAndUnzip("fop-6d721f3864e767784112ebf1ffca09107f8dc543.zip", url, true)
+    
+    //download ANT and put it into FOP's lib directory. It is needed for the build.
+    def antJarName = 'ant-1.9.2.jar'
+    def antJar = new File(fopDir, "lib/${antJarName}")
+    if (!antJar.exists()) {
+        def antUrl = "http://maven-us.nuxeo.org/nexus/content/repositories/public/org/apache/ant/ant/1.9.2/${antJarName}"
+        downloadFile(new File(fopDir, 'lib'), antJarName, antUrl)
+    }
+    
+    //Compile FOP if necessary
+    def fopJar = new File(fopDir, 'build/fop.jar')
+    if (!fopJar.exists()) {
+        logger.quiet("Compiling FOP ...")
+        def antFile = new File(fopDir, "build.xml")
+        
+        //use groovy's AntBuilder instead of Gradle's because the latter
+        //does not support the Ant task
+        def ant2 = new groovy.util.AntBuilder()
+        ant2.ant(
+            antfile: antFile,
+            dir: fopDir
+        )
+    }
+    
+    return fopDir
+}
+
+/**
+ * Converts the SOURCE_FILE name to a target file name with the given extension
+ * @param ext the new extenstion
+ * @return the new filename
+ */
+def makeTargetFileName(ext) {
+    return buildDir.toString() + '/' + FilenameUtils.removeExtension(
+            FilenameUtils.getName(SOURCE_FILE)) + '.' + ext
+}
+
+/**
+ * @return the destination file name for the compiled DocBook file
+ */
+def makeDocBookTargetFileName() {
+    return makeTargetFileName('xml')
+}
+
+/**
+ * @return the destination file name for the compiled FO file
+ */
+def makeFoTargetFileName() {
+    return makeTargetFileName('fo')
+}
+
+/**
+ * @return the destination file name for the compiled PDF
+ */
+def makePdfTargetFileName() {
+    return makeTargetFileName('pdf')
+}
+
+/**
+ * Prepares execution of AsciiDoc. Caches as much as possible
+ * so AsciiDoc can run another time very quickly
+ * @return the compiled AsciiDoc class
+ */
+def prepareDocBook() {
+    if (!ext.properties.containsKey("asciidoc")) {
+        //download and install AsciiDoc
+        def asciidocClass = setupAsciiDoc()
+        def asciidocDir = asciidocClass.getParentFile()
+        def asciidocURL = asciidocDir.toURI().toURL()
+        
+        //load the compiled class
+        def cl = new URLClassLoader([asciidocURL] as URL[], getClass().getClassLoader())
+        def acls = cl.loadClass('asciidoc$py')
+        
+        //cache results
+        ext.asciidocDir = asciidocDir
+        ext.asciidocClass = asciidocClass
+        ext.asciidoc = acls
+    }
+    return ext.asciidoc
+}
+
+/**
+ * Runs AsciiDoc to generate the DocBook file
+ */
+def doDocBook() {
+    //prepare execution
+    def acls = prepareDocBook()
+    
+    logger.quiet("Running AsciiDoc ${ASCIIDOC_VERSION} ...")
+    
+    def pyex = checkPython()
+    if (pyex) {
+        //Python is available. Run it directly.
+        buildDir.mkdirs()
+        def asciidocPy = new File(ext.asciidocDir, 'asciidoc.py').toString()
+        exec {
+            commandLine 'python', asciidocPy, '-b', 'docbook', '-o', makeDocBookTargetFileName(), SOURCE_FILE
+        }
+    } else {
+        //run AsciiDoc through the compiled class
+        def args = [
+            ext.asciidocClass.toString().replaceAll("\\\\", "/"),
+            "-b", "docbook",
+            "-o", makeDocBookTargetFileName(),
+            "$SOURCE_FILE"
+        ]
+        PySystemState.initialize(System.properties, new Properties(), args as String[])
+        
+        acls.main(args as String[])
+    }
+}
+
+/**
+ * Prepares execution of the XSL transformation that generates the FO
+ * file. Caches as much as possible so the transformation can run
+ * another time very quickly
+ * @return the compiled XSL stylesheets
+ */
+def prepareFO() {
+    if (!ext.properties.containsKey("foTemplates")) {
+        //download stylesheets and DTD
+        def docbookXSLDir = setupDocBookXSL()
+        def docbookDTDDir = setupDocBookDTD()
+        
+        //set some system properties that allow the local stylesheets
+        //and the DTD to be used (improves performance a lot)
+        System.setProperty('xslthl.config', new File(docbookXSLDir, 'highlighting/xslthl-config.xml').toString())
+        System.setProperty('xml.catalog.files', new File(docbookXSLDir, 'catalog.xml').toString() + ';' +
+            new File(docbookDTDDir, 'docbook.cat').toString())
+        System.setProperty('xml.catalog.staticCatalog', 'yes')
+        System.setProperty('xml.catalog.className', Resolver.class.getName())
+        
+        //compile the stylesheets and cache them
+        def dff = TransformerFactory.newInstance()
+        dff.setAttribute(FeatureKeys.SOURCE_PARSER_CLASS, ResolvingXMLReader.class.getName())
+        dff.setAttribute(FeatureKeys.STYLE_PARSER_CLASS, ResolvingXMLReader.class.getName())
+        dff.setURIResolver(new CatalogResolver())
+        def templates = dff.newTemplates(new StreamSource(STYLESHEET))
+        ext.foTemplates = templates
+    }
+    return ext.foTemplates
+}
+
+/**
+ * Generates the FO file
+ */
+def doFO() {
+    def df = prepareFO().newTransformer()
+    def src = new StreamSource(new File(makeDocBookTargetFileName()))
+    def dst = new StreamResult(new File(makeFoTargetFileName()))
+    df.transform(src, dst)
+}
+
+/**
+ * Prepares execution of FOP. Caches as much as possible so FOP
+ * can run another time very quickly
+ * @return the prepared FopFactory
+ */
+def preparePDF() {
+    if (!ext.properties.containsKey("fopFactory")) {
+        //download and install FOP
+        def fopDir = setupFOP()
+        
+        //load FOP jars
+        def fopLibs = fileTree(dir: fopDir, includes: [ 'build/*.jar', 'lib/*.jar' ]) + files(SOURCE_DIR)
+        def ucl = new URLClassLoader(fopLibs.collect { File file -> file.toURI().toURL() } as URL[],
+            getClass().getClassLoader())
+        
+        //create FopFactory and cache it
+        def fopConfParserClass = ucl.loadClass('org.apache.fop.apps.FopConfParser')
+        def confParser = fopConfParserClass.newInstance(new File(FOP_CONF))
+        ext.fopFactory = confParser.getFopFactoryBuilder().build()
+    }
+    return ext.fopFactory
+}
+
+/**
+ * Generates the PDF
+ */
+def doPDF() {
+    //prepare execution
+    def fopFactory = preparePDF()
+    def foUserAgent = fopFactory.newFOUserAgent()
+    
+    //open output file
+    def out = new BufferedOutputStream(new FileOutputStream(makePdfTargetFileName()))
+    def fop = fopFactory.newFop("application/pdf", foUserAgent, out)
+    
+    //perform transformation
+    def factory = TransformerFactory.newInstance()
+    def transformer = factory.newTransformer()
+    
+    def src = new StreamSource(new File(makeFoTargetFileName()))
+    def res = new SAXResult(fop.getDefaultHandler())
+    transformer.transform(src, res)
+    
+    //close output file
+    out.flush()
+    out.close()
+    
+    //print some statistics
+    def foResults = fop.getResults()
+    logger.quiet("Generated " + foResults.getPageCount() + " pages.")
+}
+
+/**
+ * Creates the DocBook XML
+ */
+task docbook {
+    inputs.files SOURCE_FILE
+    outputs.files makeDocBookTargetFileName()
+} << {
+    doDocBook()
+}
+
+/**
+ * Creates the FO file
+ */
+task fo(dependsOn: docbook) {
+    inputs.files makeDocBookTargetFileName()
+    outputs.files makeFoTargetFileName()
+} << {
+    doFO()
+}
+
+/**
+ * Creates the PDF
+ */
+task pdf(dependsOn: fo) {
+    inputs.files makeFoTargetFileName()
+    outputs.files makePdfTargetFileName()
+} << {
+    doPDF()
+}
+
+/**
+ * Watches the source file and triggers PDF generation if the
+ * file has changed. Keeps on watching forever.
+ */
+task watch << {
+    def fs = FileSystems.getDefault()
+    def srcFile = fs.getPath(SOURCE_DIR)
+    def ws = fs.newWatchService()
+    srcFile.register(ws, StandardWatchEventKinds.ENTRY_CREATE,
+        StandardWatchEventKinds.ENTRY_MODIFY)
+    while (true) {
+        WatchKey key
+        try {
+            key = ws.take()
+        } catch (InterruptedException e) {
+            break
+        }
+        
+        //consume all events
+        def changed = false
+        while (key != null) {
+            for (event in key.pollEvents()) {
+                if (event.context().getFileName().toString().equals(FilenameUtils.getName(SOURCE_FILE))) {
+                    changed = true
+                }
+            }
+            
+            if (!key.reset()) {
+                break
+            }
+            
+            //wait another 100ms to consume other events as well
+            key = ws.poll(100, TimeUnit.MILLISECONDS)
+        }
+        
+        if (key != null) {
+            //unable to reset key
+            break
+        }
+        
+        if (changed) {
+            //generate PDF
+            long start = System.currentTimeMillis()
+            doDocBook()
+            long end1 = System.currentTimeMillis()
+            doFO()
+            long end2 = System.currentTimeMillis()
+            doPDF()
+            long end3 = System.currentTimeMillis()
+            logger.quiet("Updated. DocBook: " + (end1 - start) + " ms / FO: " + (end2 - end1) +
+                " ms / PDF: " + (end3 - end2) + " ms / Total: " + (end3 - start) + " ms.")
+        }
+    }
+    ws.close()
+}
