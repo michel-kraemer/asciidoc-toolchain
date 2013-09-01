@@ -275,6 +275,8 @@ def prepareDocBook() {
  * Runs AsciiDoc to generate the DocBook file
  */
 def doDocBook() {
+    buildDir.mkdirs()
+    
     //prepare execution
     def acls = prepareDocBook()
     
@@ -283,7 +285,6 @@ def doDocBook() {
     def pyex = checkPython()
     if (pyex) {
         //Python is available. Run it directly.
-        buildDir.mkdirs()
         def asciidocPy = new File(ext.asciidocDir, 'asciidoc.py').toString()
         exec {
             commandLine 'python', asciidocPy, '-b', 'docbook', '-o', makeDocBookTargetFileName(), SOURCE_FILE
