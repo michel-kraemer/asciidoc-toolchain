@@ -22,8 +22,11 @@ buildscript {
         classpath 'org.python:jython-standalone:2.5.3'
         classpath 'org.apache.directory.studio:org.apache.commons.io:2.4'
         classpath 'net.sf.saxon:Saxon-B:9.0'
+        classpath 'de.undercouch:gradle-download-task:0.1'
     }
 }
+
+apply plugin: de.undercouch.gradle.tasks.download.DownloadTaskPlugin
 
 import java.nio.file.FileSystems
 import java.nio.file.StandardWatchEventKinds
@@ -85,13 +88,12 @@ def checkPython() {
 def downloadFile(dir, name, url) {
     def f = new File(dir, name)
     if (!f.exists()) {
-        logger.quiet("Downloading ${name} ...")
         def part = new File(dir, "${name}.part")
         part.delete()
-        ant.get(
-            src: url,
-            dest: part
-        )
+        download {
+            src url.toString()
+            dest part
+        }
         part.renameTo(f)
     }
     return f
