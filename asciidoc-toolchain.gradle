@@ -14,6 +14,7 @@
 
 buildscript {
     repositories {
+        mavenLocal()
         mavenCentral()
     }
     dependencies {
@@ -21,8 +22,10 @@ buildscript {
         classpath 'net.sf.xslthl:xslthl:2.1.0'
         classpath 'org.python:jython-standalone:2.5.3'
         classpath 'org.apache.directory.studio:org.apache.commons.io:2.4'
-        classpath 'net.sf.saxon:Saxon-B:9.0'
+        classpath 'net.sourceforge.saxon:saxon:9.1.0.8'
+        classpath 'net.sourceforge.saxon:saxon:9.1.0.8:dom'
         classpath 'de.undercouch:gradle-download-task:0.1'
+        classpath 'de.undercouch:citeproc-java:0.1'
     }
 }
 
@@ -36,6 +39,9 @@ import javax.xml.transform.TransformerFactory
 import javax.xml.transform.sax.SAXResult
 import javax.xml.transform.stream.StreamResult
 import javax.xml.transform.stream.StreamSource
+import de.undercouch.citeproc.CSL
+import de.undercouch.citeproc.bibtex.BibTeXItemDataProvider
+import de.undercouch.citeproc.bibtex.BibTeXConverter
 import net.sf.saxon.FeatureKeys
 import org.apache.commons.io.FilenameUtils
 import org.apache.xml.resolver.Resolver
@@ -243,6 +249,13 @@ def makeFoTargetFileName() {
 }
 
 /**
+ * @return the destination file name for the FO file with bibliography
+ */
+def makeBibliographyTargetFileName() {
+    return makeTargetFileName('bib.fo')
+}
+
+/**
  * @return the destination file name for the compiled PDF
  */
 def makePdfTargetFileName() {
@@ -297,7 +310,7 @@ def doDocBook() {
             ext.asciidocClass.toString().replaceAll("\\\\", "/"),
             "-b", "docbook",
             "-o", makeDocBookTargetFileName(),
-            "$SOURCE_FILE"
+            SOURCE_FILE
         ]
         PySystemState.initialize(System.properties, new Properties(), args as String[])
         
@@ -346,6 +359,84 @@ def doFO() {
     df.transform(src, dst)
 }
 
+def replaceLigatures(s) {
+    return s.replaceAll('ffi', '\uFB03')
+        .replaceAll('ffl', '\uFB04')
+        .replaceAll('ff', '\uFB00')
+        .replaceAll('fi', '\uFB01')
+        .replaceAll('fl', '\uFB02')
+}
+
+def replaceLigaturesXML(s) {
+    for (m in (s =~ /<[^>]*>([^<]+)/)) {
+        def r = replaceLigatures(m[1])
+        s = s.replace(m[1], r)
+    }
+    return s
+}
+
+def doBibliography() {
+    if (!file(BIB_FILE).exists()) {
+        return
+    }
+    
+    buildDir.mkdirs()
+    
+    def db
+    file(BIB_FILE).withInputStream {
+        db = new BibTeXConverter().loadDatabase(it)
+    }
+    
+    def provider = new BibTeXItemDataProvider()
+    provider.addDatabase(db)
+    
+    def ids = []
+    file(makeFoTargetFileName()).withReader("UTF-8") { r ->
+        String line
+        while ((line = r.readLine()) != null) {
+            for (m in (line =~ /\[cite:([^\]]+)\]/)) {
+                if (provider.retrieveItem(m[1]) != null) {
+                    ids << m[1]
+                }
+            }
+        }
+    }
+    
+    def citeproc = new CSL(provider, BIB_STYLE)
+    citeproc.setOutputFormat("fo")
+    citeproc.setConvertLinks(true)
+    citeproc.registerCitationItems(*ids)
+    
+    def nl = 0
+    file(makeFoTargetFileName()).withReader("UTF-8") { r ->
+        file(makeBibliographyTargetFileName()).withWriter("UTF-8") { w ->
+            String line
+            while ((line = r.readLine()) != null) {
+                nl++
+                for (m in (line =~ /\[cite:([^\]]+)\]/)) {
+                    def nc = '???'
+                    if (provider.retrieveItem(m[1]) != null) {
+                        def c = citeproc.makeCitation(m[1])
+                        nc = replaceLigatures(c.text[0])
+                        nc = "<fo:basic-link internal-destination=\"${m[1]}\">${nc}</fo:basic-link>"
+                    } else {
+                        logger.warn("Missing citation in line ${nl}: ${m[1]}")
+                    }
+                    line = line.replace(m[0], nc)
+                }
+                if (line.equals('$citeproc-bibliography$')) {
+                    def b = citeproc.makeBibliography()
+                    for (e in b.entries) {
+                        w.write(replaceLigaturesXML(e))
+                    }
+                } else {
+                    w.writeLine(line)
+                }
+            }
+        }
+    }
+}
+
 /**
  * Prepares execution of FOP. Caches as much as possible so FOP
  * can run another time very quickly
@@ -385,7 +476,7 @@ def doPDF() {
     def factory = TransformerFactory.newInstance()
     def transformer = factory.newTransformer()
     
-    def src = new StreamSource(new File(makeFoTargetFileName()))
+    def src = new StreamSource(new File(makeBibliographyTargetFileName()))
     def res = new SAXResult(fop.getDefaultHandler())
     transformer.transform(src, res)
     
@@ -418,11 +509,18 @@ task fo(dependsOn: docbook) {
     doFO()
 }
 
+task bibliography(dependsOn: fo) {
+    inputs.files files(makeFoTargetFileName(), BIB_FILE)
+    outputs.files makeBibliographyTargetFileName()
+} << {
+    doBibliography()
+}
+
 /**
  * Creates the PDF
  */
-task pdf(dependsOn: fo) {
-    inputs.files makeFoTargetFileName()
+task pdf(dependsOn: bibliography) {
+    inputs.files makeBibliographyTargetFileName()
     outputs.files makePdfTargetFileName()
 } << {
     doPDF()
@@ -450,7 +548,9 @@ task watch << {
         def changed = false
         while (key != null) {
             for (event in key.pollEvents()) {
-                if (event.context().getFileName().toString().equals(FilenameUtils.getName(SOURCE_FILE))) {
+                def name = event.context().getFileName().toString()
+                if (name.equals(FilenameUtils.getName(SOURCE_FILE)) ||
+                    name.equals(FilenameUtils.getName(BIB_FILE))) {
                     changed = true
                 }
             }
@@ -475,10 +575,13 @@ task watch << {
             long end1 = System.currentTimeMillis()
             doFO()
             long end2 = System.currentTimeMillis()
-            doPDF()
+            doBibliography()
             long end3 = System.currentTimeMillis()
-            logger.quiet("Updated. DocBook: " + (end1 - start) + " ms / FO: " + (end2 - end1) +
-                " ms / PDF: " + (end3 - end2) + " ms / Total: " + (end3 - start) + " ms.")
+            doPDF()
+            long end4 = System.currentTimeMillis()
+            logger.quiet("Updated. DocBook: " + (end1 - start) +
+                " ms / FO: " + (end2 - end1) + " ms / Bib: " + (end3 - end2) +
+                " ms / PDF: " + (end4 - end3) + " ms / Total: " + (end4 - start) + " ms.")
         }
     }
     ws.close()
