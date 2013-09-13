@@ -14,8 +14,11 @@
 
 buildscript {
     repositories {
-        mavenLocal()
         mavenCentral()
+        maven {
+            url 'https://oss.sonatype.org/content/groups/public'
+        }
+        mavenLocal()
     }
     dependencies {
         classpath 'xml-resolver:xml-resolver:1.2'
@@ -26,6 +29,8 @@ buildscript {
         classpath 'net.sourceforge.saxon:saxon:9.1.0.8:dom'
         classpath 'de.undercouch:gradle-download-task:0.1'
         classpath 'de.undercouch:citeproc-java:0.1'
+        classpath 'org.citationstyles:styles:1.0.1-SNAPSHOT'
+        classpath 'org.citationstyles:locales:1.0.1-SNAPSHOT'
     }
 }
 
