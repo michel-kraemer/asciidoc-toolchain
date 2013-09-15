@@ -240,6 +240,13 @@ def makeTargetFileName(ext) {
 }
 
 /**
+ * @return the destination file name for the compiled HTML file
+ */
+def makeHTMLTargetFileName() {
+    return makeTargetFileName('html')
+}
+
+/**
  * @return the destination file name for the compiled DocBook file
  */
 def makeDocBookTargetFileName() {
@@ -272,7 +279,7 @@ def makePdfTargetFileName() {
  * so AsciiDoc can run another time very quickly
  * @return the compiled AsciiDoc class
  */
-def prepareDocBook() {
+def prepareAsciiDoc() {
     if (!ext.properties.containsKey("asciidoc")) {
         //download and install AsciiDoc
         def asciidocClass = setupAsciiDoc()
@@ -291,14 +298,11 @@ def prepareDocBook() {
     return ext.asciidoc
 }
 
-/**
- * Runs AsciiDoc to generate the DocBook file
- */
-def doDocBook() {
+def doAsciiDoc(backend, target) {
     buildDir.mkdirs()
     
     //prepare execution
-    def acls = prepareDocBook()
+    def acls = prepareAsciiDoc()
     
     logger.quiet("Running AsciiDoc ${ASCIIDOC_VERSION} ...")
     
@@ -307,20 +311,31 @@ def doDocBook() {
         //Python is available. Run it directly.
         def asciidocPy = new File(ext.asciidocDir, 'asciidoc.py').toString()
         exec {
-            commandLine 'python', asciidocPy, '-b', 'docbook', '-o', makeDocBookTargetFileName(), SOURCE_FILE
+            commandLine 'python', asciidocPy, '-b', backend, '-o', target, SOURCE_FILE
         }
     } else {
         //run AsciiDoc through the compiled class
         def args = [
             ext.asciidocClass.toString().replaceAll("\\\\", "/"),
-            "-b", "docbook",
-            "-o", makeDocBookTargetFileName(),
+            "-b", backend,
+            "-o", target,
             SOURCE_FILE
         ]
         PySystemState.initialize(System.properties, new Properties(), args as String[])
         
         acls.main(args as String[])
     }
+}
+
+def doHTML() {
+    doAsciiDoc('html', makeHTMLTargetFileName())
+}
+
+/**
+ * Runs AsciiDoc to generate the DocBook file
+ */
+def doDocBook() {
+    doAsciiDoc('docbook', makeDocBookTargetFileName())
 }
 
 /**
@@ -492,6 +507,16 @@ def doPDF() {
     //print some statistics
     def foResults = fop.getResults()
     logger.quiet("Generated " + foResults.getPageCount() + " pages.")
+}
+
+/**
+ * Creates HTML
+ */
+task html {
+    inputs.files SOURCE_FILE
+    outputs.files makeHTMLTargetFileName()
+} << {
+    doHTML()
 }
 
 /**
