@@ -31,7 +31,7 @@ a file called `build.gradle` in the directory where your AsciiDoc
 source file is. Here's an example:
 
 ```groovy
-apply from: 'https://raw.github.com/michel-kraemer/asciidoc-toolchain/0.1/asciidoc-toolchain.gradle'
+apply from: 'https://raw.github.com/michel-kraemer/asciidoc-toolchain/0.2/asciidoc-toolchain.gradle'
 
 defaultTasks 'pdf'
 
