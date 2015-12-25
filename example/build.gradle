@@ -1,5 +1,7 @@
 apply from: '../asciidoc-toolchain.gradle'
 
+defaultTasks 'pdf'
+
 task wrapper(type: Wrapper) {
     gradleVersion = '2.10'
 }
