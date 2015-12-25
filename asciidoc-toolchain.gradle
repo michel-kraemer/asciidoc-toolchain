@@ -24,7 +24,6 @@ buildscript {
     dependencies {
         classpath 'xml-resolver:xml-resolver:1.2'
         classpath 'net.sf.xslthl:xslthl:2.1.0'
-        classpath 'org.python:jython-standalone:2.5.3'
         classpath 'org.apache.directory.studio:org.apache.commons.io:2.4'
         classpath 'net.sourceforge.saxon:saxon:9.1.0.8'
         classpath 'net.sourceforge.saxon:saxon:9.1.0.8:dom'
@@ -32,6 +31,7 @@ buildscript {
         classpath 'de.undercouch:citeproc-java:0.1'
         classpath 'org.apache.pdfbox:fontbox:1.8.10'
         classpath 'org.apache.xmlgraphics:fop:2.0'
+        classpath 'org.asciidoctor:asciidoctorj:1.5.2'
         classpath 'org.citationstyles:styles:1.0.1-SNAPSHOT'
         classpath 'org.citationstyles:locales:1.0.1-SNAPSHOT'
     }
@@ -56,42 +56,7 @@ import org.apache.fop.apps.FopConfParser
 import org.apache.xml.resolver.Resolver
 import org.apache.xml.resolver.tools.CatalogResolver
 import org.apache.xml.resolver.tools.ResolvingXMLReader
-import org.python.core.PySystemState
-import org.python.core.imp
-import org.python.modules._py_compile
-
-/**
- * Checks if Python 2.4 or higher (but not Python 3.x) is available
- * in the system's path
- * @return true if the correct version of Python is available, false otherwise
- */
-def checkPython() {
-  if (!ext.properties.containsKey("pythonExists")) {
-      try {
-          //try to execute Python. Buffer its output.
-          def errout = new ByteArrayOutputStream()
-          exec {
-              commandLine 'python', '--version'
-              standardOutput = new ByteArrayOutputStream()
-              errorOutput = errout
-          }
-
-          //check output for version number
-          def pyver = errout.toString().trim()
-          if (!pyver.startsWith('Python 2.')) {
-              logger.warn("Unexpected Python version: ${pyver}")
-              logger.warn("Please install Python 2.4 or higher (but not 3.x) to improve performance")
-              ext.pythonExists = false
-          } else {
-              ext.pythonExists = true
-          }
-      } catch (Exception e) {
-          //executable not found or some other error happened
-          ext.pythonExists = false
-      }
-  }
-  return ext.pythonExists
-}
+import org.asciidoctor.Asciidoctor
 
 /**
  * Downloads a file. Does not do anything if the file already exists.
@@ -140,42 +105,6 @@ def downloadAndUnzip(name, url, cut) {
     }
 
     return destDir
-}
-
-/**
- * Downloads AsciiDoc and compiles it to Java bytecode
- * @return the compiled and loaded AsciiDoc class
- */
-def setupAsciiDoc() {
-    def url = "https://asciidoc.googlecode.com/archive/${ASCIIDOC_VERSION}.zip"
-
-    //create directory for executable files
-    def asciidocDir = new File(projectDir, ".asciidoc")
-    asciidocDir.mkdirs()
-
-    //check if the compiled AsciiDoc class exists
-    def asciidocExecDir = new File(asciidocDir, ASCIIDOC_VERSION)
-    def asciidocClass = new File(asciidocExecDir, 'asciidoc$py.class')
-    if (!asciidocClass.exists()) {
-        //download AsciiDoc if necessary
-        downloadAndUnzip("${ASCIIDOC_VERSION}.zip", url, true)
-
-        //replace __file__ in AsciiDoc Python script
-        def asciidocPy = new File(asciidocExecDir, "asciidoc.py")
-        ant.replace(
-            file: asciidocPy,
-            token: '__file__',
-            value: "'" + asciidocPy.toString().replaceAll("\\\\", "/") + "'"
-        )
-
-        //compile AsciiDoc Python script to bytecode
-        logger.quiet("Compiling ...")
-        def moduleName = _py_compile.getModuleName(asciidocPy)
-        def bytes = imp.compileSource(moduleName, asciidocPy)
-        imp.cacheCompiledSource(asciidocPy.getAbsolutePath(), asciidocClass.getAbsolutePath(), bytes)
-    }
-
-    return asciidocClass
 }
 
 /**
@@ -246,23 +175,11 @@ def makePdfTargetFileName() {
 /**
  * Prepares execution of AsciiDoc. Caches as much as possible
  * so AsciiDoc can run another time very quickly
- * @return the compiled AsciiDoc class
+ * @return the Asciidoctor object
  */
 def prepareAsciiDoc() {
     if (!ext.properties.containsKey("asciidoc")) {
-        //download and install AsciiDoc
-        def asciidocClass = setupAsciiDoc()
-        def asciidocDir = asciidocClass.getParentFile()
-        def asciidocURL = asciidocDir.toURI().toURL()
-
-        //load the compiled class
-        def cl = new URLClassLoader([asciidocURL] as URL[], getClass().getClassLoader())
-        def acls = cl.loadClass('asciidoc$py')
-
-        //cache results
-        ext.asciidocDir = asciidocDir
-        ext.asciidocClass = asciidocClass
-        ext.asciidoc = acls
+        ext.asciidoc = Asciidoctor.Factory.create()
     }
     return ext.asciidoc
 }
@@ -271,29 +188,16 @@ def doAsciiDoc(backend, target) {
     buildDir.mkdirs()
 
     //prepare execution
-    def acls = prepareAsciiDoc()
+    def asciidoc = prepareAsciiDoc()
 
-    logger.quiet("Running AsciiDoc ${ASCIIDOC_VERSION} ...")
+    logger.quiet("Running AsciiDoc ...")
 
-    def pyex = checkPython()
-    if (pyex) {
-        //Python is available. Run it directly.
-        def asciidocPy = new File(ext.asciidocDir, 'asciidoc.py').toString()
-        exec {
-            commandLine 'python', asciidocPy, '-b', backend, '-o', target, SOURCE_FILE
-        }
-    } else {
-        //run AsciiDoc through the compiled class
-        def args = [
-            ext.asciidocClass.toString().replaceAll("\\\\", "/"),
-            "-b", backend,
-            "-o", target,
-            SOURCE_FILE
+    asciidoc.convert(file(SOURCE_FILE).newReader("utf-8"), file(target).newWriter("utf-8"), [
+        'header_footer': true,
+        'attributes': [
+            'backend': backend
         ]
-        PySystemState.initialize(System.properties, new Properties(), args as String[])
-
-        acls.main(args as String[])
-    }
+    ])
 }
 
 def doHTML() {
