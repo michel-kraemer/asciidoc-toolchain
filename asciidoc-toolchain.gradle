@@ -30,6 +30,8 @@ buildscript {
         classpath 'net.sourceforge.saxon:saxon:9.1.0.8:dom'
         classpath 'de.undercouch:gradle-download-task:2.1.0'
         classpath 'de.undercouch:citeproc-java:0.1'
+        classpath 'org.apache.pdfbox:fontbox:1.8.10'
+        classpath 'org.apache.xmlgraphics:fop:2.0'
         classpath 'org.citationstyles:styles:1.0.1-SNAPSHOT'
         classpath 'org.citationstyles:locales:1.0.1-SNAPSHOT'
     }
@@ -50,6 +52,7 @@ import de.undercouch.citeproc.bibtex.BibTeXItemDataProvider
 import de.undercouch.citeproc.bibtex.BibTeXConverter
 import net.sf.saxon.FeatureKeys
 import org.apache.commons.io.FilenameUtils
+import org.apache.fop.apps.FopConfParser
 import org.apache.xml.resolver.Resolver
 import org.apache.xml.resolver.tools.CatalogResolver
 import org.apache.xml.resolver.tools.ResolvingXMLReader
@@ -193,41 +196,6 @@ def setupDocBookDTD() {
     def baseName = 'docbook-xml-4.5.jar'
     def url = "http://maven-us.nuxeo.org/nexus/content/repositories/public/docbook/docbook-xml/4.5/${baseName}"
     return downloadAndUnzip(baseName, url, false)
-}
-
-/**
- * Sets up FOP. Downloads, unzips, and compiles it.
- * @return the directory where FOP is installed
- */
-def setupFOP() {
-    //download FOP
-    def url = 'https://github.com/apache/fop/archive/6d721f3864e767784112ebf1ffca09107f8dc543.zip'
-    def fopDir = downloadAndUnzip("fop-6d721f3864e767784112ebf1ffca09107f8dc543.zip", url, true)
-
-    //download ANT and put it into FOP's lib directory. It is needed for the build.
-    def antJarName = 'ant-1.9.2.jar'
-    def antJar = new File(fopDir, "lib/${antJarName}")
-    if (!antJar.exists()) {
-        def antUrl = "http://maven-us.nuxeo.org/nexus/content/repositories/public/org/apache/ant/ant/1.9.2/${antJarName}"
-        downloadFile(new File(fopDir, 'lib'), antJarName, antUrl)
-    }
-
-    //Compile FOP if necessary
-    def fopJar = new File(fopDir, 'build/fop.jar')
-    if (!fopJar.exists()) {
-        logger.quiet("Compiling FOP ...")
-        def antFile = new File(fopDir, "build.xml")
-
-        //use groovy's AntBuilder instead of Gradle's because the latter
-        //does not support the Ant task
-        def ant2 = new groovy.util.AntBuilder()
-        ant2.ant(
-            antfile: antFile,
-            dir: fopDir
-        )
-    }
-
-    return fopDir
 }
 
 /**
@@ -466,17 +434,7 @@ def doBibliography() {
  */
 def preparePDF() {
     if (!ext.properties.containsKey("fopFactory")) {
-        //download and install FOP
-        def fopDir = setupFOP()
-
-        //load FOP jars
-        def fopLibs = fileTree(dir: fopDir, includes: [ 'build/*.jar', 'lib/*.jar' ]) + files(SOURCE_DIR)
-        def ucl = new URLClassLoader(fopLibs.collect { File file -> file.toURI().toURL() } as URL[],
-            getClass().getClassLoader())
-
-        //create FopFactory and cache it
-        def fopConfParserClass = ucl.loadClass('org.apache.fop.apps.FopConfParser')
-        def confParser = fopConfParserClass.newInstance(new File(FOP_CONF))
+        def confParser = new FopConfParser(new File(FOP_CONF))
         ext.fopFactory = confParser.getFopFactoryBuilder().build()
     }
     return ext.fopFactory
