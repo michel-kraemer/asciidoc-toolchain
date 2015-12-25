@@ -72,7 +72,7 @@ def checkPython() {
               standardOutput = new ByteArrayOutputStream()
               errorOutput = errout
           }
-          
+
           //check output for version number
           def pyver = errout.toString().trim()
           if (!pyver.startsWith('Python 2.')) {
@@ -122,7 +122,7 @@ def downloadFile(dir, name, url) {
 def downloadAndUnzip(name, url, cut) {
     def asciidocDir = new File(projectDir, ".asciidoc")
     asciidocDir.mkdirs()
-    
+
     def destDir = new File(asciidocDir, FilenameUtils.removeExtension(name))
     if (!destDir.exists()) {
         def destFile = downloadFile(asciidocDir, name, url)
@@ -135,7 +135,7 @@ def downloadAndUnzip(name, url, cut) {
             ant.unzip(src: destFile, dest: destDir)
         }
     }
-    
+
     return destDir
 }
 
@@ -145,18 +145,18 @@ def downloadAndUnzip(name, url, cut) {
  */
 def setupAsciiDoc() {
     def url = "https://asciidoc.googlecode.com/archive/${ASCIIDOC_VERSION}.zip"
-    
+
     //create directory for executable files
     def asciidocDir = new File(projectDir, ".asciidoc")
     asciidocDir.mkdirs()
-    
+
     //check if the compiled AsciiDoc class exists
     def asciidocExecDir = new File(asciidocDir, ASCIIDOC_VERSION)
     def asciidocClass = new File(asciidocExecDir, 'asciidoc$py.class')
     if (!asciidocClass.exists()) {
         //download AsciiDoc if necessary
         downloadAndUnzip("${ASCIIDOC_VERSION}.zip", url, true)
-        
+
         //replace __file__ in AsciiDoc Python script
         def asciidocPy = new File(asciidocExecDir, "asciidoc.py")
         ant.replace(
@@ -164,14 +164,14 @@ def setupAsciiDoc() {
             token: '__file__',
             value: "'" + asciidocPy.toString().replaceAll("\\\\", "/") + "'"
         )
-        
+
         //compile AsciiDoc Python script to bytecode
         logger.quiet("Compiling ...")
         def moduleName = _py_compile.getModuleName(asciidocPy)
         def bytes = imp.compileSource(moduleName, asciidocPy)
         imp.cacheCompiledSource(asciidocPy.getAbsolutePath(), asciidocClass.getAbsolutePath(), bytes)
     }
-    
+
     return asciidocClass
 }
 
@@ -203,7 +203,7 @@ def setupFOP() {
     //download FOP
     def url = 'https://github.com/apache/fop/archive/6d721f3864e767784112ebf1ffca09107f8dc543.zip'
     def fopDir = downloadAndUnzip("fop-6d721f3864e767784112ebf1ffca09107f8dc543.zip", url, true)
-    
+
     //download ANT and put it into FOP's lib directory. It is needed for the build.
     def antJarName = 'ant-1.9.2.jar'
     def antJar = new File(fopDir, "lib/${antJarName}")
@@ -211,13 +211,13 @@ def setupFOP() {
         def antUrl = "http://maven-us.nuxeo.org/nexus/content/repositories/public/org/apache/ant/ant/1.9.2/${antJarName}"
         downloadFile(new File(fopDir, 'lib'), antJarName, antUrl)
     }
-    
+
     //Compile FOP if necessary
     def fopJar = new File(fopDir, 'build/fop.jar')
     if (!fopJar.exists()) {
         logger.quiet("Compiling FOP ...")
         def antFile = new File(fopDir, "build.xml")
-        
+
         //use groovy's AntBuilder instead of Gradle's because the latter
         //does not support the Ant task
         def ant2 = new groovy.util.AntBuilder()
@@ -226,7 +226,7 @@ def setupFOP() {
             dir: fopDir
         )
     }
-    
+
     return fopDir
 }
 
@@ -286,11 +286,11 @@ def prepareAsciiDoc() {
         def asciidocClass = setupAsciiDoc()
         def asciidocDir = asciidocClass.getParentFile()
         def asciidocURL = asciidocDir.toURI().toURL()
-        
+
         //load the compiled class
         def cl = new URLClassLoader([asciidocURL] as URL[], getClass().getClassLoader())
         def acls = cl.loadClass('asciidoc$py')
-        
+
         //cache results
         ext.asciidocDir = asciidocDir
         ext.asciidocClass = asciidocClass
@@ -301,12 +301,12 @@ def prepareAsciiDoc() {
 
 def doAsciiDoc(backend, target) {
     buildDir.mkdirs()
-    
+
     //prepare execution
     def acls = prepareAsciiDoc()
-    
+
     logger.quiet("Running AsciiDoc ${ASCIIDOC_VERSION} ...")
-    
+
     def pyex = checkPython()
     if (pyex) {
         //Python is available. Run it directly.
@@ -323,7 +323,7 @@ def doAsciiDoc(backend, target) {
             SOURCE_FILE
         ]
         PySystemState.initialize(System.properties, new Properties(), args as String[])
-        
+
         acls.main(args as String[])
     }
 }
@@ -350,7 +350,7 @@ def prepareFO() {
         //download stylesheets and DTD
         def docbookXSLDir = setupDocBookXSL()
         def docbookDTDDir = setupDocBookDTD()
-        
+
         //set some system properties that allow the local stylesheets
         //and the DTD to be used (improves performance a lot)
         System.setProperty('xslthl.config', new File(docbookXSLDir, 'highlighting/xslthl-config.xml').toString())
@@ -358,7 +358,7 @@ def prepareFO() {
             new File(docbookDTDDir, 'docbook.cat').toString())
         System.setProperty('xml.catalog.staticCatalog', 'yes')
         System.setProperty('xml.catalog.className', Resolver.class.getName())
-        
+
         //compile the stylesheets and cache them
         def dff = TransformerFactory.newInstance()
         dff.setAttribute(FeatureKeys.SOURCE_PARSER_CLASS, ResolvingXMLReader.class.getName())
@@ -400,17 +400,17 @@ def doBibliography() {
     if (!file(BIB_FILE).exists()) {
         return
     }
-    
+
     buildDir.mkdirs()
-    
+
     def db
     file(BIB_FILE).withInputStream {
         db = new BibTeXConverter().loadDatabase(it)
     }
-    
+
     def provider = new BibTeXItemDataProvider()
     provider.addDatabase(db)
-    
+
     def ids = []
     file(makeFoTargetFileName()).withReader("UTF-8") { r ->
         String line
@@ -422,12 +422,12 @@ def doBibliography() {
             }
         }
     }
-    
+
     def citeproc = new CSL(provider, BIB_STYLE)
     citeproc.setOutputFormat("fo")
     citeproc.setConvertLinks(true)
     citeproc.registerCitationItems(*ids)
-    
+
     def nl = 0
     file(makeFoTargetFileName()).withReader("UTF-8") { r ->
         file(makeBibliographyTargetFileName()).withWriter("UTF-8") { w ->
@@ -467,12 +467,12 @@ def preparePDF() {
     if (!ext.properties.containsKey("fopFactory")) {
         //download and install FOP
         def fopDir = setupFOP()
-        
+
         //load FOP jars
         def fopLibs = fileTree(dir: fopDir, includes: [ 'build/*.jar', 'lib/*.jar' ]) + files(SOURCE_DIR)
         def ucl = new URLClassLoader(fopLibs.collect { File file -> file.toURI().toURL() } as URL[],
             getClass().getClassLoader())
-        
+
         //create FopFactory and cache it
         def fopConfParserClass = ucl.loadClass('org.apache.fop.apps.FopConfParser')
         def confParser = fopConfParserClass.newInstance(new File(FOP_CONF))
@@ -488,11 +488,11 @@ def doPDF() {
     //prepare execution
     def fopFactory = preparePDF()
     def foUserAgent = fopFactory.newFOUserAgent()
-    
+
     //open output file
     def out = new BufferedOutputStream(new FileOutputStream(makePdfTargetFileName()))
     def fop = fopFactory.newFop("application/pdf", foUserAgent, out)
-    
+
     //perform transformation
     def factory = TransformerFactory.newInstance()
     def transformer = factory.newTransformer()
@@ -500,11 +500,11 @@ def doPDF() {
     def src = new StreamSource(new File(makeBibliographyTargetFileName()))
     def res = new SAXResult(fop.getDefaultHandler())
     transformer.transform(src, res)
-    
+
     //close output file
     out.flush()
     out.close()
-    
+
     //print some statistics
     def foResults = fop.getResults()
     logger.quiet("Generated " + foResults.getPageCount() + " pages.")
@@ -574,7 +574,7 @@ task watch << {
         } catch (InterruptedException e) {
             break
         }
-        
+
         //consume all events
         def changed = false
         while (key != null) {
@@ -585,20 +585,20 @@ task watch << {
                     changed = true
                 }
             }
-            
+
             if (!key.reset()) {
                 break
             }
-            
+
             //wait another 100ms to consume other events as well
             key = ws.poll(100, TimeUnit.MILLISECONDS)
         }
-        
+
         if (key != null) {
             //unable to reset key
             break
         }
-        
+
         if (changed) {
             //generate PDF
             long start = System.currentTimeMillis()
