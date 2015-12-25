@@ -1,0 +1,5 @@
+apply from: '../asciidoc-toolchain.gradle'
+
+task wrapper(type: Wrapper) {
+    gradleVersion = '2.10'
+}
