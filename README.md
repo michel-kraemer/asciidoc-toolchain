@@ -44,7 +44,6 @@ Additionally, you need to add a file called `gradle.properties`
 where you have to define some settings. Here's a sample file:
 
 ```properties
-ASCIIDOC_VERSION=8.6.8
 SOURCE_DIR=src
 SOURCE_FILE=src/article.asc
 STYLESHEET=src/fo.xsl
@@ -84,16 +83,13 @@ Contribution
 ------------
 
 This is a very rough version of my toolchain. There's a lot of space
-for improvements. The current version is slightly configurable but
-more options may be added in the future. It also depends on downloading
-FOP's source code and compiling it, because support for OpenType CFF
-fonts has only been added recently and I need this for my work. As soon
-as the next version of FOP will be released, this can be removed.
+for improvements. The current version is configurable but
+more options may be added in the future.
 
-Anyway, if you like the toolchain and want to contribute you're more
+If you like the toolchain and want to contribute you're more
 than welcome! Feel free to send me any comments, issues, or pull
 requests. I would be very glad to improve this little piece of code
-and to make it suitable for a wider audience. Thanks!
+and to make it suitable for a broader audience. Thanks!
 
 License
 -------
