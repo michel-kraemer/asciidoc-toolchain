@@ -1,4 +1,4 @@
-// Copyright 2013 Michel Kraemer
+// Copyright 2013-2015 Michel Kraemer
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ buildscript {
             url 'https://oss.sonatype.org/content/groups/public'
         }
         mavenLocal()
+        jcenter()
     }
     dependencies {
         classpath 'xml-resolver:xml-resolver:1.2'
@@ -27,7 +28,7 @@ buildscript {
         classpath 'org.apache.directory.studio:org.apache.commons.io:2.4'
         classpath 'net.sourceforge.saxon:saxon:9.1.0.8'
         classpath 'net.sourceforge.saxon:saxon:9.1.0.8:dom'
-        classpath 'de.undercouch:gradle-download-task:1.0'
+        classpath 'de.undercouch:gradle-download-task:2.1.0'
         classpath 'de.undercouch:citeproc-java:0.1'
         classpath 'org.citationstyles:styles:1.0.1-SNAPSHOT'
         classpath 'org.citationstyles:locales:1.0.1-SNAPSHOT'

@@ -36,7 +36,7 @@ apply from: 'https://raw.github.com/michel-kraemer/asciidoc-toolchain/0.1/asciid
 defaultTasks 'pdf'
 
 task wrapper(type: Wrapper) {
-    gradleVersion = '1.7'
+    gradleVersion = '2.10'
 }
 ```
 
