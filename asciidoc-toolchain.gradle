@@ -397,11 +397,12 @@ def replaceLigaturesXML(s) {
 }
 
 def doBibliography() {
-    if (!file(BIB_FILE).exists()) {
+    buildDir.mkdirs()
+
+    if (!project.hasProperty('BIB_FILE') || !file(BIB_FILE).exists()) {
+        file(makeBibliographyTargetFileName()).text = file(makeFoTargetFileName()).text
         return
     }
-
-    buildDir.mkdirs()
 
     def db
     file(BIB_FILE).withInputStream {
@@ -496,7 +497,7 @@ def doPDF() {
     //perform transformation
     def factory = TransformerFactory.newInstance()
     def transformer = factory.newTransformer()
-    
+
     def src = new StreamSource(new File(makeBibliographyTargetFileName()))
     def res = new SAXResult(fop.getDefaultHandler())
     transformer.transform(src, res)
@@ -541,7 +542,11 @@ task fo(dependsOn: docbook) {
 }
 
 task bibliography(dependsOn: fo) {
-    inputs.files files(makeFoTargetFileName(), BIB_FILE)
+    if (project.hasProperty('BIB_FILE')) {
+        inputs.files files(makeFoTargetFileName(), BIB_FILE)
+    } else {
+        inputs.files makeFoTargetFileName()
+    }
     outputs.files makeBibliographyTargetFileName()
 } << {
     doBibliography()
