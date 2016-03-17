@@ -39,8 +39,10 @@ buildscript {
 
 apply plugin: de.undercouch.gradle.tasks.download.DownloadTaskPlugin
 
+import com.sun.nio.file.SensitivityWatchEventModifier
 import java.nio.file.FileSystems
 import java.nio.file.StandardWatchEventKinds
+import java.nio.file.WatchEvent
 import java.nio.file.WatchKey
 import java.util.concurrent.TimeUnit
 import javax.xml.transform.TransformerFactory
@@ -432,8 +434,10 @@ task watch << {
     def fs = FileSystems.getDefault()
     def srcFile = fs.getPath(SOURCE_DIR)
     def ws = fs.newWatchService()
-    srcFile.register(ws, StandardWatchEventKinds.ENTRY_CREATE,
-        StandardWatchEventKinds.ENTRY_MODIFY)
+    srcFile.register(ws, [
+        StandardWatchEventKinds.ENTRY_CREATE,
+        StandardWatchEventKinds.ENTRY_MODIFY
+    ] as WatchEvent.Kind[], SensitivityWatchEventModifier.HIGH)
     while (true) {
         WatchKey key
         try {
