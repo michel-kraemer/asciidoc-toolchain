@@ -1,4 +1,4 @@
-apply from: 'https://raw.github.com/michel-kraemer/asciidoc-toolchain/0.2/asciidoc-toolchain.gradle'
+apply from: 'https://raw.github.com/michel-kraemer/asciidoc-toolchain/0.3/asciidoc-toolchain.gradle'
 
 defaultTasks 'pdf'
 
